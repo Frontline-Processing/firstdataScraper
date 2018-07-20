@@ -15,10 +15,10 @@ dwn = os.path.join(direct, 'csv')
 
 firstdata = {
     'drivername': 'mysql+pymysql',
-    'host': 'merchdb.c0v9kpl8n2zi.us-west-2.rds.amazonaws.com',
-    'port': 3306,
-    'username': 'merch_admin',
-    'password': '!GrKDb04gioSVQ*A2c$2',
+    'host': os.environ["host"],
+    'port': os.environ["port"],
+    'username': os.environ["rds_user"],
+    'password': os.environ["rds_pass"],
     'database': 'firstdata',
 }
 
