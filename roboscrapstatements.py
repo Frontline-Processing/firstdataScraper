@@ -8,6 +8,7 @@ import shutil
 import sys
 import time
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.engine.url import URL
 from selenium.common.exceptions import NoAlertPresentException, NoSuchElementException, UnexpectedAlertPresentException, StaleElementReferenceException
 from decimal import Decimal, getcontext
@@ -148,57 +149,58 @@ class Main(object):
         currentdate = date.replace(day=1)
         headers = ["MID", "date", "fileID", "folderID"]
         sect = {}
+        lnmid = "','".join(mid)
+        curdate = currentdate.date()
         try:
-            my_query = "SELECT * from statementData.notifyStatement where MID like '{}' and `date` = '{}' limit 1".format(
-                "','".join(mid), str(currentdate.date()))
+            my_query = "SELECT * from statementData.notifyStatement where MID like '{lnmid}' and `date` = '{curdate}' limit 1"
 
             print(my_query)
-            fileID = [item for item in callConnection(self.confir, my_query)]
-            print("This is my search for file id: {}".format(fileID))
+            fileID = [item for item in self.confir.execute(my_query)]
+            print(f"This is my search for file id: {fileID}")
             if not fileID:
-                my_query = "SELECT * from notifyStatement where MID = '{}' limit 1".format(
-                    "','".join(mid))
-                midID = [item for item in callConnection(
-                    self.confir, my_query)]
+                my_query = f"SELECT * from notifyStatement where MID = '{lnmid}' limit 1"
+                midID = [item for item in self.confir.execute(my_query)]
                 print(midID)
                 if midID:
                     midID = midID[0]
-                    print("all get the folder than " + str(midID))
+                    print(f"all get the folder than {midID}")
 
                     fileID = dr.upload(statement, str(date.date()), midID[3])
                     print("This is my file" + fileID)
                     if fileID:
-                        ins = "INSERT into notifyStatement({}) Values('{}')".format(
-                            "`mid`,`date`,`fileID`,`folderID`", "','".join([mid[0], str(currentdate), fileID, folderID]))
+                        ins = "INSERT into notifyStatement(`mid`,`date`,`fileID`,`folderID`) Values('{val}')".format(val="','".join([mid[0], str(currentdate), fileID, folderID]))
                         print(ins)
-                        if callConnection(self.confir, ins):
-                            sect["success"] = {"MID": mid, "date": str(
-                                currentdate), "fileID": fileID, "folderID": midID[3]}
+                        try:
+                            self.confir.execute(ins)
+                        except IntegrityError:
+                            pass
+
+                        sect["success"] = {"MID": mid, "date": str(currentdate), "fileID": fileID, "folderID": midID[3]}
 
                     else:
-                        respo = "The current month does not exist yet for {}".format(
-                            mid[0])
+                        respo = "The current month does not exist yet for {0}".format(mid[0])
                         print(respo)
                         sect["error"] = respo
 
                 else:
-                    print("creating the folder from :" + str(mid[0]), folderID)
-                    midID = dr.createFolder(str(mid[0]), folderID)
-                    print("This is my mid :" + midID)
-                    name = "{}.pdf".format(str(date.date()))
+                    print("creating the folder from : {mid}, {id}".format(mid = mid[0], id=folderID))
+                    midID= dr.createFolder(str(mid[0]), folderID)
+                    print(f"This is my mid :{midID}")
+                    name = f"{date.date()}.pdf"
                     fileID = dr.upload(statement, name, midID)
-                    print("This is my file :" + fileID)
+                    print(f"This is my file : {fileID}")
                     if fileID:
-                        ins = "INSERT into notifyStatement({}) Values('{}')".format(
-                            "`mid`,`date`,`fileID`,`folderID`", "','".join([mid[0], str(currentdate), fileID, midID]))
+                        ins = "INSERT into notifyStatement(`mid`,`date`,`fileID`,`folderID`) Values('{val}')".format("','".join([mid[0], str(currentdate), fileID, midID]))
                         print(ins)
-                        if callConnection(self.confir, ins):
-                            sect["success"] = {"MID": mid, "date": str(
-                                currentdate), "fileID": fileID, "folderID": midID}
+                        try:
+                            self.confir.execute(ins)
+                        except IntegrityError:
+                            pass
+                        sect["success"] = {"MID": mid, "date": str(currentdate), "fileID": fileID, "folderID": midID}
+
 
                     else:
-                        respo = "The current month does not exist yet for {}".format(
-                            mid[0])
+                        respo = "The current month does not exist yet for {mid}".format(mid=mid[0])
                         print(respo)
                         sect["error"] = respo
 
@@ -376,28 +378,34 @@ class Main(object):
                 print(lst)
 
             insert_lst = "','".join(str(x) for x in lst)
-            insert_me = "insert into firstdata_statement(`{}`) VALUES('{}')".format(headers, insert_lst)
-
-            moved_pdf = "done/{}{}.pdf".format(
-                str(my_statement_dict["proccessing_date"].date()), str(my_statement_dict["mid"]))
+            insert_me = f"INSERT into statementData.firstdata_statement(`{headers}`) VALUES('{insert_lst}')"
+            moved_pdf = "done/{date}{mid}.pdf".format(date= my_statement_dict["proccessing_date"].date(), mid = my_statement_dict["mid"])
             moved_pdf = os.path.join(direct, moved_pdf)
+
+            try:
+                self.confir.execute(insert_me)
+                mn.get_ID([my_statement_dict["mid"]], my_statement_dict["proccessing_date"], moved_pdf)
+            except IntegrityError as e:
+                print(f"Failed to insert the value, I already exists {e}")
+                pass
+
             if not os.path.exists("done"):
                 os.makedirs("done")
             shutil.move(open_file, moved_pdf)
-            if callConnection(self.confir, insert_me):
-                mn.get_ID([my_statement_dict["mid"]], my_statement_dict["proccessing_date"], moved_pdf)
 
-            else:
-                print("Failed to insert the value, I already exists {}".format(
-                    sys.exc_info))
+            return True
+
 
     @manage_firstdata
     def get_mid_search(self):
         """Get all currently processing mids from transactions"""
-        my_mid = pd.read_sql("SELECT distinct mid from firstdata.transactions where `processing-date` > '{}'".format(rolling_12_cycle), self.confir)
+        my_mid = pd.read_sql(f"SELECT distinct mid from firstdata.transactions where `processing-date` between '{rolling_12_cycle}' and CURDATE()", self.confir)
+        my_found = pd.read_sql("SELECT distinct mid from statementData.firstdata_statement where `date` between CURDATE()- INTERVAL 1 MONTH and CURDATE()", self.confir)
+        mids = my_found.mid.tolist()
+        my_mid = my_mid[~my_mid['mid'].isin(mids)]
         return my_mid["mid"].tolist()
 
-    def getstatement(self):
+    def getstatement(self, mid):
         from selenium import webdriver
         from selenium.webdriver.common.keys import Keys
         from selenium.webdriver.common.action_chains import ActionChains
@@ -406,9 +414,13 @@ class Main(object):
 
         """Setup options for chrome web browser"""
         mn = Main()
-        mid_to_search = mn.get_mid_search()
-        display = Display(visible=0, size=(800, 600))
-        display.start()
+        if not mid:
+            mid_to_search = mn.get_mid_search()
+        else:
+            mid_to_search = [str(mid)]
+        print(mid_to_search)
+        #display = Display(visible=0, size=(800, 600))
+        #display.start()
 
         driver_builder = DriverBuilder()
         self.browser = driver_builder.get_driver(dwn, headless=False)
@@ -459,24 +471,28 @@ class Main(object):
             except NoSuchElementException:
                 continue
 
+        #wait for a moment so that everything can finish
+        time.sleep(5)
+
         browser.quit()
         try:
             display.close()
-        except AttributeError:
-            print("The Display is already closed?")
+        except (AttributeError, NameError) as e:
+            print(f"The Display is already closed? {e}")
 
 if __name__ == "__main__":
     import argparse
     mn = Main()
     parser = argparse.ArgumentParser()
-    parser.add_argument("-r", "--run", help="Run the selenium script to grab csv", action="store_true", default=False)
-    parser.add_argument("-p", "--parse", help="Parse the csv", action="store_true", default=False)
+    parser.add_argument("-r", "--run", help="Run the selenium script to grab statement pdfs", action="store_true", default=False)
+    parser.add_argument("-p", "--parse", help="Parse the statment pdfs", action="store_true", default=False)
     parser.add_argument("-d", "--date", help="Check the date to see if statements need to run", action="store_true", default=False)
+    parser.add_argument("-m", "--mid", help="Run only this mid", default=False)
     args = parser.parse_args()
     if args.date:
         if 5 < now.day:
             sys.exit()
     if args.run:
-        mn.getstatement()
+        mn.getstatement(args.mid)
     if args.parse:
         mn.parse_statement()
